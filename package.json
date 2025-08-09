@@ -1,0 +1,32 @@
+{
+  "name": "speech-to-structure",
+  "version": "1.0.0",
+  "description": "Audio-Aufnahme mit Whisper-Tiny Transkription und GPT-OSS:20B Strukturierung",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "speech-to-text",
+    "whisper",
+    "gpt",
+    "audio",
+    "transcription",
+    "ai"
+  ],
+  "author": "Generated with GitHub Copilot",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "form-data": "^4.0.4",
+    "multer": "^2.0.2"
+  }
+}
