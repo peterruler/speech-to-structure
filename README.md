@@ -6,8 +6,8 @@ Eine Node.js-Anwendung, die Audio-Aufnahmen mit Whisper-Tiny transkribiert und m
 
 ![Speech-to-Structure App Interface](_Project/Screenshot.png)
 
-- Das Resultat ist noch fehlerhaft Verbesserungsvorschläge gerne an <a href="mailto:7starch@gmail.com">Peter</a>.
-Bessere Resultate erzielt man wenn der Plaintext angeben wird. Franz Beckenbauer 120 80 etc.
+- Das Resultat ist noch zum Teil, noch fehlerhaft Verbesserungsvorschläge gerne an <a href="mailto:7starch@gmail.com">Peter</a>.
+
 ## Features
 
 - 🎤 **Audio-Aufnahme**: Direkte Aufnahme über das Web-Interface

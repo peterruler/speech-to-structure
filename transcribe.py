@@ -16,7 +16,7 @@ segments, info = model.transcribe(
     audio_path,
     beam_size=1,           # schnell
     vad_filter=True,       # robust gegen Stille
-    language=None          # autodetect; setze "de" wenn gewünscht
+    language="de"          # autodetect; setze "de" wenn gewünscht
 )
 
 text = "".join(seg.text for seg in segments).strip()

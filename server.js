@@ -6,8 +6,7 @@ const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
 
-// Funktion für Whisper-Transkription nur mit lokalem Ollama dimavz/whisper-tiny
-// oben bei den imports ergänzen:
+// Python faster-whisper Integration für lokale Speech-to-Text Verarbeitung
 const { execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
@@ -111,13 +110,67 @@ async function transcribeAudio(audioFilePath) {
   });
 }
 
-// Hilfsfunktion für intelligentes Text-Parsing als Fallback
-function parseTextToJson(responseText, originalText) {
-  console.log('Versuche intelligentes Text-Parsing...');
+// Vereinfachte Funktion für rohes Transkript - Direktes Parsing zuerst
+async function structureText(text) {
+  const rawTranscript = String(text).trim();
+  
+  console.log('=== ROHES TRANSKRIPT ===');
+  console.log(rawTranscript);
+  console.log('========================');
+  
+  // Direktes JSON-Parsing des Transkripts (immer zuerst versuchen)
+  const result = parseTranscriptDirectly(rawTranscript);
+  
+  // Prüfe ob wir sinnvolle Daten haben
+  const hasValidData = result.vorname || result.nachname || result.alter || 
+                       result.geschlecht || result.blutdruck || result.koerpertemperatur ||
+                       result.diagnose_liste.length > 0;
+  
+  if (hasValidData) {
+    console.log('✅ Direktes Parsing erfolgreich:', result);
+    return result;
+  }
+  
+  console.log('⚠️ Direktes Parsing unvollständig, verwende Fallback...');
+  
+  // Fallback: Minimal GPT-OSS:20B (nur bei unvollständigen Daten)
+  try {
+    const prompt = `Parse: ${rawTranscript}\n\nJSON: {"vorname":"","nachname":"","alter":"","geschlecht":"","blutdruck":"","koerpertemperatur":"","weitere_vitalparameter":[],"diagnose_liste":[]}`;
+
+    const response = await axios.post(process.env.GPT_OSS_ENDPOINT || 'http://localhost:11434/api/generate', {
+      model: 'gpt-oss:20b',
+      prompt: prompt,
+      stream: false,
+      options: { temperature: 0.1, num_predict: 150 }
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000 // Nur 10 Sekunden
+    });
+
+    if (response.data?.response) {
+      const jsonMatch = response.data.response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const gptResult = JSON.parse(jsonMatch[0]);
+        console.log('✅ GPT-OSS:20B Fallback erfolgreich:', gptResult);
+        return gptResult;
+      }
+    }
+  } catch (gptError) {
+    console.log('❌ GPT-OSS:20B Fallback fehlgeschlagen:', gptError.message);
+  }
+
+  // Letzter Fallback: Verwende direktes Parsing Ergebnis auch wenn unvollständig
+  console.log('⚡ Verwende direktes Parsing Ergebnis als Final Fallback');
+  return result;
+}
+
+// Direkte Parsing-Funktion für strukturierte UND natürliche Transkripte
+function parseTranscriptDirectly(transcript) {
+  console.log('Verwende direktes JSON-Parsing...');
   
   const result = {
     vorname: "",
-    nachname: "", 
+    nachname: "",
     alter: "",
     geschlecht: "",
     blutdruck: "",
@@ -126,264 +179,105 @@ function parseTextToJson(responseText, originalText) {
     diagnose_liste: []
   };
 
-  // Kombiniere Response und Original-Text für Analyse
-  const textToAnalyze = `${responseText} ${originalText}`.toLowerCase();
+  const text = transcript.toLowerCase();
 
-  // Vorname-Erkennung (häufige deutsche Vornamen)
-  const vornamen = ['max', 'anna', 'peter', 'maria', 'thomas', 'sandra', 'michael', 'julia', 'stefan', 'lisa', 'christian', 'nicole', 'andreas', 'sabine', 'markus', 'petra'];
-  for (const name of vornamen) {
-    if (textToAnalyze.includes(name)) {
-      result.vorname = name.charAt(0).toUpperCase() + name.slice(1);
-      break;
+  // === STRUKTURIERTES FORMAT ===
+  // Extrahiere Vorname (strukturiert)
+  let vornameMatch = transcript.match(/Vorname\s+([A-Za-zäöüÄÖÜß]+)/i);
+  if (vornameMatch) result.vorname = vornameMatch[1];
+
+  // Extrahiere Nachname (strukturiert)
+  let nachnameMatch = transcript.match(/Nachname\s+([A-Za-zäöüÄÖÜß]+)/i);
+  if (nachnameMatch) result.nachname = nachnameMatch[1];
+
+  // === NATÜRLICHES FORMAT ===
+  if (!result.vorname || !result.nachname) {
+    // "mein Name ist Max Mustermann" oder "ich bin Max Mustermann"
+    const nameMatch = transcript.match(/(mein name ist|ich bin|ich heiße)\s+([A-Za-zäöüÄÖÜß]+)\s+([A-Za-zäöüÄÖÜß]+)/i);
+    if (nameMatch) {
+      result.vorname = nameMatch[2];
+      result.nachname = nameMatch[3];
     }
   }
 
-  // Alter-Erkennung (Zahlen oder Zahlwörter)
-  const alterMatch = textToAnalyze.match(/(\d+)\s*jahr|jahr\s*(\d+)|(zwanzig|dreißig|vierzig|fünfzig|sechzig|siebzig|achtzig|neunzig|hundert)/);
-  if (alterMatch) {
-    const zahl = alterMatch[1] || alterMatch[2];
-    if (zahl) {
-      result.alter = zahl;
-    } else {
-      // Zahlwörter konvertieren
-      const zahlwoerter = {
-        'zwanzig': '20', 'dreißig': '30', 'vierzig': '40', 'fünfzig': '50',
-        'sechzig': '60', 'siebzig': '70', 'achtzig': '80', 'neunzig': '90'
-      };
-      for (const [wort, zahl] of Object.entries(zahlwoerter)) {
-        if (textToAnalyze.includes(wort)) {
-          result.alter = zahl;
-          break;
-        }
-      }
+  // === ALTER ===
+  // Strukturiert: "Alter 37 Jahre"
+  let alterMatch = transcript.match(/Alter\s+(\d+)/i);
+  if (!alterMatch) {
+    // Natürlich: "ich bin 50 Jahre alt" oder "50 Jahre alt"
+    alterMatch = transcript.match(/(\d+)\s*jahre?\s*(alt)?/i);
+  }
+  if (alterMatch) result.alter = alterMatch[1] + " Jahre";
+
+  // === GESCHLECHT ===
+  // Strukturiert: "Geschlecht männlich"
+  let geschlechtMatch = transcript.match(/Geschlecht\s+(\w+)/i);
+  if (!geschlechtMatch) {
+    // Natürlich: "männlich" oder "weiblich" im Text
+    if (text.includes('männlich') || text.includes('mann')) {
+      result.geschlecht = 'männlich';
+    } else if (text.includes('weiblich') || text.includes('frau')) {
+      result.geschlecht = 'weiblich';
     }
+  } else {
+    result.geschlecht = geschlechtMatch[1];
   }
 
-  // Geschlecht-Erkennung
-  if (textToAnalyze.includes('männlich') || textToAnalyze.includes('mann') || textToAnalyze.includes('herr')) {
-    result.geschlecht = 'männlich';
-  } else if (textToAnalyze.includes('weiblich') || textToAnalyze.includes('frau') || textToAnalyze.includes('dame')) {
-    result.geschlecht = 'weiblich';
+  // === BLUTDRUCK ===
+  // Beide Formate: "Blutdruck 120 zu 80" oder "Blutdruck ist 130°C zu 80°C"
+  let blutdruckMatch = transcript.match(/Blutdruck\s+(?:ist\s+)?(\d+)°?C?\s*zu\s*(\d+)°?C?/i);
+  if (!blutdruckMatch) {
+    // Natürlich: "Mein Blutdruck ist 130 zu 80"
+    blutdruckMatch = transcript.match(/blutdruck\s+(?:ist\s+)?(\d+)°?C?\s*zu\s*(\d+)°?C?/i);
   }
-
-  // Blutdruck-Erkennung
-  const blutdruckMatch = textToAnalyze.match(/(\d+)[\/\s]*(zu|über|\s)+(\d+)|(\d+)[\/](\d+)/);
   if (blutdruckMatch) {
-    const systolisch = blutdruckMatch[1] || blutdruckMatch[4];
-    const diastolisch = blutdruckMatch[3] || blutdruckMatch[5];
-    if (systolisch && diastolisch) {
-      result.blutdruck = `${systolisch}/${diastolisch} mmHg`;
-    }
+    result.blutdruck = `${blutdruckMatch[1]}/${blutdruckMatch[2]} mmHg`;
   }
 
-  // Temperatur-Erkennung
-  const tempMatch = textToAnalyze.match(/(\d+)[,.]?(\d+)?\s*grad|temperatur[:\s]*(\d+)[,.]?(\d+)?/);
+  // === KÖRPERTEMPERATUR ===
+  // Strukturiert: "Körpertemperatur 37°C" 
+  let tempMatch = transcript.match(/Körpertemperatur\s+(\d+[,.]?\d*)°?C?/i);
+  if (!tempMatch) {
+    // Natürlich: "Temperatur 38,5°C" oder "38,5 Grad"
+    tempMatch = transcript.match(/Temperatur\s+(\d+[,.]?\d*)°?C?/i) ||
+               transcript.match(/(\d+[,.]?\d*)\s*grad/i) ||
+               transcript.match(/(\d+[,.]?\d*)°C/i);
+  }
   if (tempMatch) {
-    const grad1 = tempMatch[1];
-    const dezimal1 = tempMatch[2] || '0';
-    const grad2 = tempMatch[3];
-    const dezimal2 = tempMatch[4] || '0';
-    const temp = grad1 ? `${grad1}.${dezimal1}` : `${grad2}.${dezimal2}`;
+    const temp = tempMatch[1].replace(',', '.');
     result.koerpertemperatur = `${temp}°C`;
   }
 
-  // Prüfe ob wir relevante Daten gefunden haben
-  const hasData = result.vorname || result.alter || result.geschlecht || result.blutdruck || result.koerpertemperatur;
-  
-  return hasData ? result : null;
-}
-
-// Funktion für GPT-OSS:20B API-Aufruf (Ollama)
-async function structureText(text) {
-  const prompt = `Du bist ein medizinischer Datenextraktor. Analysiere und korrigiere den folgenden transkribierten Text von Patientenangaben. Extrahiere alle verfügbaren Informationen und korrigiere offensichtliche Transkriptionsfehler (z.B. "sechzig Jahre" → "60", "männlich" → "männlich", "Blutdruck einhundertdreißig zu achtzig" → "130/80").
-
-WICHTIGE KATEGORIEN (immer prüfen):
-- Vorname: Erkenne Vornamen, auch bei Rechtschreibfehlern
-- Nachname: Erkenne Nachnamen, auch bei Rechtschreibfehlern  
-- Alter: Erkenne Altersangaben in Worten oder Zahlen (z.B. "fünfzig Jahre" → "50")
-- Geschlecht: männlich/weiblich/divers (auch "Mann"→"männlich", "Frau"→"weiblich")
-- Blutdruck: Erkennung von Werten wie "130 zu 80" oder "hundertdreißig achtzig" → "130/80 mmHg"
-- Körpertemperatur: Temperaturangaben (z.B. "achtunddreißig Grad" → "38°C")
-- Weitere Vitalparameter: Puls, Sauerstoffsättigung, Atemfrequenz, etc.
-- Diagnose Liste: Medizinische Diagnosen, Symptome, Beschwerden (bis zu 5 Einträge)
-
-TEXT ZU ANALYSIEREN:
-${text}
-
-Antwort strikt als JSON-Objekt (keine zusätzlichen Erklärungen):
-{
-  "vorname": "",
-  "nachname": "", 
-  "alter": "",
-  "geschlecht": "",
-  "blutdruck": "",
-  "koerpertemperatur": "",
-  "weitere_vitalparameter": [],
-  "diagnose_liste": []
-}`;
-
-  try {
-    // Ollama API-Aufruf (Standard Ollama API) mit optimierten Parametern
-    const response = await axios.post(process.env.GPT_OSS_ENDPOINT || 'http://localhost:11434/api/generate', {
-      model: 'gpt-oss:20b',
-      prompt: prompt,
-      stream: false,
-      options: {
-        temperature: 0.1,  // Niedrigere Temperatur für präzisere Extraktion
-        top_p: 0.9,        // Fokus auf wahrscheinlichste Tokens
-        num_predict: 500,  // Mehr Tokens für detaillierte Antworten
-        repeat_penalty: 1.1,
-        stop: ['\n\n', '```'] // Stop bei Code-Blöcken oder doppelten Zeilenumbrüchen
-      }
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000 // 30 Sekunden Timeout
-    });
-
-    console.log('GPT Response:', response.data);
-
-    // Verarbeite Ollama-Response
-    if (response.data && response.data.response) {
-      const responseText = response.data.response.trim();
-      console.log('GPT Response Text:', responseText);
-      
-      // Versuche JSON zu parsen - mehrere Ansätze
-      try {
-        // 1. Direktes JSON-Parsing
-        const directJson = JSON.parse(responseText);
-        if (directJson && typeof directJson === 'object') {
-          return directJson;
-        }
-      } catch (parseError) {
-        console.log('Direct JSON Parse failed, trying extraction...');
-      }
-
-      try {
-        // 2. Extrahiere JSON aus der Antwort (zwischen { und })
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extractedJson = JSON.parse(jsonMatch[0]);
-          console.log('Extracted JSON:', extractedJson);
-          return extractedJson;
-        }
-      } catch (parseError) {
-        console.log('JSON Extraction failed:', parseError);
-      }
-
-      // 3. Fallback: Versuche Text-Parsing für bekannte Muster
-      try {
-        const fallbackData = parseTextToJson(responseText, text);
-        if (fallbackData) {
-          console.log('Fallback parsing successful:', fallbackData);
-          return fallbackData;
-        }
-      } catch (fallbackError) {
-        console.log('Fallback parsing failed:', fallbackError);
-      }
-    }
-
-    // Letzter Fallback: Versuche direkte Text-Analyse des Original-Texts
-    console.log('Verwende direktes Text-Parsing des Originaltexts als letzten Fallback...');
-    const directParsing = parseTextToJson('', text);
-    if (directParsing) {
-      return directParsing;
-    }
-
-    // Absoluter Fallback - mit Hinweis auf fehlende Daten
-    return {
-      vorname: "Im Text nicht erkennbar",
-      nachname: "Im Text nicht erkennbar", 
-      alter: "Im Text nicht erkennbar",
-      geschlecht: "Im Text nicht erkennbar",
-      blutdruck: "Im Text nicht erkennbar",
-      koerpertemperatur: "Im Text nicht erkennbar",
-      weitere_vitalparameter: ["Weitere Parameter nicht im Text identifiziert"],
-      diagnose_liste: ["Transkription: " + text.substring(0, 100) + "..."]
-    };
-  } catch (error) {
-    console.error('Fehler bei der Strukturierung:', error);
-    
-    // Fallback-Strukturierung basierend auf dem transkribierten Text
-    return extractBasicInfo(text);
-  }
-}
-
-// Verbesserte Fallback-Extraktion
-function extractBasicInfo(text) {
-  const result = {
-    vorname: "Nicht angegeben",
-    nachname: "Nicht angegeben",
-    alter: "Nicht angegeben", 
-    geschlecht: "Nicht angegeben",
-    blutdruck: "Nicht angegeben",
-    koerpertemperatur: "Nicht angegeben",
-    weitere_vitalparameter: [],
-    diagnose_liste: []
-  };
-
-  // Namen extrahieren
-  const namePattern = /(patient|patientin)?\s*([A-Za-zäöüÄÖÜß]+)\s+([A-Za-zäöüÄÖÜß]+)/i;
-  const nameMatch = text.match(namePattern);
-  if (nameMatch) {
-    result.vorname = nameMatch[2];
-    result.nachname = nameMatch[3];
+  // === VITALPARAMETER ===
+  // Puls: "Puls 60" oder "Herzfrequenz 70"
+  const pulsMatch = transcript.match(/(?:Puls|Herzfrequenz)\s+(\d+)°?C?/i);
+  if (pulsMatch) {
+    result.weitere_vitalparameter.push(`Puls: ${pulsMatch[1]} bpm`);
   }
 
-  // Geschlecht bestimmen
-  if (text.match(/männlich|mann|herr/i)) {
-    result.geschlecht = "Männlich";
-  } else if (text.match(/weiblich|frau|patientin/i)) {
-    result.geschlecht = "Weiblich";
-  }
-
-  // Alter extrahieren
-  const ageMatch = text.match(/(\d+)\s*jahre?\s*(alt)?/i);
-  if (ageMatch) result.alter = ageMatch[1] + " Jahre";
-
-  // Blutdruck extrahieren (verschiedene Formate)
-  const bpMatch = text.match(/(\d+)\s*(zu|\/)\s*(\d+)\s*(mmhg)?/i) || 
-                  text.match(/blutdruck\s*(\d+)[\s\/]+(\d+)/i);
-  if (bpMatch) {
-    const systolic = bpMatch[1];
-    const diastolic = bpMatch[3] || bpMatch[2];
-    result.blutdruck = `${systolic}/${diastolic} mmHg`;
-  }
-
-  // Temperatur extrahieren
-  const tempMatch = text.match(/(\d+[.,]\d*)\s*°?\s*c(elsius)?/i) ||
-                    text.match(/temperatur\s*(\d+[.,]\d*)/i);
-  if (tempMatch) {
-    const temp = tempMatch[1].replace(',', '.');
-    result.koerpertemperatur = temp + "°C";
-  }
-
-  // Weitere Vitalparameter
-  const pulseMatch = text.match(/puls|herzfrequenz[\s:]*(\d+)/i);
-  if (pulseMatch) {
-    result.weitere_vitalparameter.push(`Puls: ${pulseMatch[1]} bpm`);
-  }
-
-  // Diagnosen extrahieren
-  const diagnosePatterns = [
-    /diagnose[\s:]*([^,\.]+)/i,
-    /bluthochdruck|hypertonie/i,
-    /grippe|erkältung/i,
-    /fieber/i,
-    /normal|unauffällig/i
-  ];
-
-  diagnosePatterns.forEach(pattern => {
-    const match = text.match(pattern);
-    if (match && result.diagnose_liste.length < 5) {
-      const diagnose = match[1] ? match[1].trim() : match[0];
-      if (!result.diagnose_liste.includes(diagnose)) {
+  // === DIAGNOSEN ===
+  // Strukturiert: "Diagnose 1, Fieber"
+  const strukturierteDiagnosen = transcript.match(/Diagnose\s+\d+[,:\s]*([^,]+)/gi);
+  if (strukturierteDiagnosen) {
+    strukturierteDiagnosen.forEach(match => {
+      const diagnose = match.replace(/Diagnose\s+\d+[,:\s]*/i, '').trim();
+      if (diagnose && !result.diagnose_liste.includes(diagnose)) {
         result.diagnose_liste.push(diagnose);
+      }
+    });
+  }
+
+  // Natürlich: "Ich habe Kopfschmerzen und Fieber"
+  const symptome = ['Kopfschmerzen', 'Fieber', 'Übelkeit', 'Schwindel', 'Husten', 'Schnupfen', 'Bauchschmerzen'];
+  symptome.forEach(symptom => {
+    if (text.includes(symptom.toLowerCase())) {
+      if (!result.diagnose_liste.includes(symptom)) {
+        result.diagnose_liste.push(symptom);
       }
     }
   });
 
+  console.log('Geparste Daten:', result);
   return result;
 }
 
