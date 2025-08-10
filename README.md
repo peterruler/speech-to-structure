@@ -6,7 +6,7 @@ Eine Node.js-Anwendung, die Audio-Aufnahmen mit Whisper-Tiny transkribiert und m
 
 ![Speech-to-Structure App Interface](_Project/Screenshot.png)
 
-- Das Resultat ist noch zum Teil, noch fehlerhaft Verbesserungsvorschläge gerne an <a href="mailto:7starch@gmail.com">Peter</a>.
+- Das Resultat ist noch zum Teil, noch fehlerhaft. Verbesserungsvorschläge gerne an <a href="mailto:7starch@gmail.com">Peter</a>.
 
 ## Features
 
