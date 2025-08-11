@@ -162,6 +162,36 @@
             padding: 20px;
             border-radius: 8px;
             border-left: 4px solid #00d2d3;
+            margin-bottom: 20px;
+        }
+        
+        .diagnosis-section {
+            background: linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .diagnosis-content {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .diagnosis-text {
+            font-size: 16px;
+            color: #2e7d32;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        
+        .diagnosis-disclaimer {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+            font-style: italic;
         }
         
         .data-grid {
@@ -262,6 +292,16 @@
                     <div class="structured-data">
                         <h3>📊 Strukturierte Daten</h3>
                         <div id="structuredData" class="data-grid"></div>
+                    </div>
+                    
+                    <div id="diagnosisSection" class="diagnosis-section" style="display: none;">
+                        <h3>🩺 Mögliche Diagnose</h3>
+                        <div class="diagnosis-content">
+                            <div id="diagnosisText" class="diagnosis-text"></div>
+                            <div class="diagnosis-disclaimer">
+                                ⚠️ Hinweis: Diese KI-generierte Diagnose ersetzt keine professionelle medizinische Beratung.
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -369,7 +409,22 @@
             structuredDataContainer.innerHTML = '';
 
             const structuredData = data.structuredData;
+            
+            // Diagnose-Sektion behandeln
+            const diagnosisSection = document.getElementById('diagnosisSection');
+            const diagnosisText = document.getElementById('diagnosisText');
+            
+            if (structuredData.possibleDiagnosis && structuredData.possibleDiagnosis.trim() !== '') {
+                diagnosisText.textContent = structuredData.possibleDiagnosis;
+                diagnosisSection.style.display = 'block';
+            } else {
+                diagnosisSection.style.display = 'none';
+            }
+            
+            // Strukturierte Daten anzeigen (ohne possibleDiagnosis)
             for (const [key, value] of Object.entries(structuredData)) {
+                if (key === 'possibleDiagnosis') continue; // Skip diagnosis for structured data section
+                
                 const item = document.createElement('div');
                 item.className = 'data-item';
                 
@@ -379,7 +434,7 @@
                 
                 const valueDiv = document.createElement('div');
                 valueDiv.className = 'data-value';
-                valueDiv.textContent = Array.isArray(value) ? value.join(', ') || 'Nicht angegeben' : value;
+                valueDiv.textContent = Array.isArray(value) ? value.join(', ') || 'Nicht angegeben' : value || 'Nicht angegeben';
                 
                 item.appendChild(label);
                 item.appendChild(valueDiv);

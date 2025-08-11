@@ -133,18 +133,32 @@ async function structureText(text) {
   
   console.log('⚠️ Direktes Parsing unvollständig, verwende Fallback...');
   
-  // Fallback: Minimal GPT-OSS:20B (nur bei unvollständigen Daten)
+  // Fallback: Erweiterte GPT-OSS:20B Medizinische Diagnose (nur bei unvollständigen Daten)
   try {
-    const prompt = `Parse: ${rawTranscript}\n\nJSON: {"vorname":"","nachname":"","alter":"","geschlecht":"","blutdruck":"","koerpertemperatur":"","weitere_vitalparameter":[],"diagnose_liste":[]}`;
+    const prompt = `Analysiere folgenden medizinischen Text und extrahiere die Informationen als JSON. 
+Berücksichtige insbesondere Körpertemperatur, Blutdruck, Diagnoseliste und alle Vitalparameter.
+Leite aus diesen Werten eine mögliche medizinische Diagnose ab und füge sie im Feld "possibleDiagnosis" hinzu.
+
+Text: ${rawTranscript}
+
+Erwartetes JSON-Format:
+{"vorname":"","nachname":"","alter":"","geschlecht":"","blutdruck":"","koerpertemperatur":"","weitere_vitalparameter":[],"diagnose_liste":[],"possibleDiagnosis":""}
+
+Beispiel possibleDiagnosis:
+- Bei Fieber + hohem Blutdruck: "Mögliche Infektion mit hypertensiver Krise"
+- Bei niedrigem Blutdruck + Schwindel: "Hypotonie mit Kreislaufsymptomatik"
+- Bei normalem Befund: "Unauffällige Vitalparameter"
+
+JSON:`;
 
     const response = await axios.post(process.env.GPT_OSS_ENDPOINT || 'http://localhost:11434/api/generate', {
       model: 'gpt-oss:20b',
       prompt: prompt,
       stream: false,
-      options: { temperature: 0.1, num_predict: 150 }
+      options: { temperature: 0.2, num_predict: 250 }
     }, {
       headers: { 'Content-Type': 'application/json' },
-      timeout: 10000 // Nur 10 Sekunden
+      timeout: 15000 // 15 Sekunden für komplexere Diagnose
     });
 
     if (response.data?.response) {
@@ -176,7 +190,8 @@ function parseTranscriptDirectly(transcript) {
     blutdruck: "",
     koerpertemperatur: "",
     weitere_vitalparameter: [],
-    diagnose_liste: []
+    diagnose_liste: [],
+    possibleDiagnosis: ""
   };
 
   const text = transcript.toLowerCase();
@@ -276,6 +291,41 @@ function parseTranscriptDirectly(transcript) {
       }
     }
   });
+
+  // === MÖGLICHE DIAGNOSE GENERIEREN ===
+  function generatePossibleDiagnosis() {
+    const temp = parseFloat(result.koerpertemperatur);
+    const blutdruckWerte = result.blutdruck.match(/(\d+)\/(\d+)/);
+    const systolic = blutdruckWerte ? parseInt(blutdruckWerte[1]) : 0;
+    const diastolic = blutdruckWerte ? parseInt(blutdruckWerte[2]) : 0;
+    const diagnosen = result.diagnose_liste;
+    
+    // Diagnose-Logik basierend auf Vitalparametern
+    if (temp > 38.5 && systolic > 140) {
+      return "Mögliche Infektion mit hypertensiver Reaktion - Ärztliche Abklärung erforderlich";
+    } else if (temp > 38.0) {
+      return "Fieberhafter Infekt - Symptomatische Behandlung und Beobachtung";
+    } else if (systolic > 140 || diastolic > 90) {
+      return "Arterielle Hypertonie - Blutdruckkontrolle empfohlen";
+    } else if (systolic < 90 || diastolic < 60) {
+      return "Hypotonie - Kreislaufstabilisierung beachten";
+    } else if (diagnosen.includes('Kopfschmerzen') && diagnosen.includes('Fieber')) {
+      return "Grippaler Infekt mit Allgemeinsymptomatik";
+    } else if (diagnosen.includes('Kopfschmerzen')) {
+      return "Cephalgie - Ursachenabklärung bei Persistenz";
+    } else if (diagnosen.length > 0) {
+      return `Symptomkomplex: ${diagnosen.join(', ')} - Weitere Diagnostik empfohlen`;
+    } else if (temp >= 36.5 && temp <= 37.5 && systolic >= 90 && systolic <= 140) {
+      return "Unauffällige Vitalparameter - Gesundheitszustand stabil";
+    } else {
+      return "Unspezifische Symptomatik - Weitere Beobachtung empfohlen";
+    }
+  }
+  
+  // Diagnose nur generieren wenn wir medizinische Daten haben
+  if (result.koerpertemperatur || result.blutdruck || result.diagnose_liste.length > 0) {
+    result.possibleDiagnosis = generatePossibleDiagnosis();
+  }
 
   console.log('Geparste Daten:', result);
   return result;
